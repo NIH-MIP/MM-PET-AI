@@ -1,0 +1,157 @@
+Metadata-Version: 2.4
+Name: mmpetai
+Version: 1.0.0
+Summary: Whole-body lesion segmentation on FDG, PSMA, and DOTATATE PET/CT with one model.
+Author: Haoyue Zhang, Alesia Vazquez-Quiroga, Fahmida Haque, Baris Turkbey, Stephanie Harmon
+Keywords: PET/CT,segmentation,deep learning,medical imaging,FDG,PSMA,DOTATATE
+Classifier: Programming Language :: Python :: 3
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Medical Science Apps.
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch>=2.0
+Requires-Dist: monai>=1.5.2
+Requires-Dist: nibabel>=4.0
+Requires-Dist: numpy>=1.22
+Requires-Dist: scipy>=1.8
+Requires-Dist: huggingface_hub>=0.20
+Requires-Dist: safetensors>=0.4
+Provides-Extra: dicom
+Requires-Dist: pydicom>=2.3; extra == "dicom"
+Provides-Extra: test
+Requires-Dist: pytest>=7; extra == "test"
+Dynamic: license-file
+
+# MM-PET-AI
+
+Whole-body lesion segmentation on **FDG**, **PSMA**, and **DOTATATE** PET/CT with one model.
+
+MM-PET-AI takes one PET/CT pair and returns a lesion mask on the PET grid. It does not need the tracer name, organ masks, or any manual input. It also reports a scan-level lesion-presence probability, basic lesion statistics (count, volume, SUVmax, SUVmean, total lesion uptake), and an auxiliary tracer prediction.
+
+Model weights: **[huggingface.co/zhanghaoyue/MM-PET-AI](https://huggingface.co/zhanghaoyue/MM-PET-AI)**
+
+> **Research use only.** MM-PET-AI is not a medical device and has not been validated for clinical decision-making. Review every segmentation before you use it.
+
+## Installation
+
+```bash
+pip install git+https://github.com/NIH-MIP/MM-PET-AI.git
+```
+
+Install a [PyTorch build](https://pytorch.org/get-started/locally/) that matches your CUDA version first. Python 3.9 or newer is required. To read SUV factors from PET DICOM headers, also install the `dicom` extra: `pip install "mmpetai[dicom] @ git+https://github.com/NIH-MIP/MM-PET-AI.git"`.
+
+You don't need to download the weights yourself. The first run fetches them from the Hugging Face Hub and caches them in `~/.cache/huggingface`. Later runs work offline.
+
+## Command line
+
+One scan:
+
+```bash
+mmpetai -pet pet.nii.gz -ct ct.nii.gz -o lesions.nii.gz
+```
+
+| Output | Content |
+|---|---|
+| `lesions.nii.gz` | Binary lesion mask (uint8) on the original PET grid |
+| `lesions.json` | Lesion-presence probability, lesion count, volume, SUV statistics, tracer prediction |
+| `lesions_prob.nii.gz` | Lesion probability map (only with `--save-probabilities`) |
+
+A folder of scans, named `<case>_0000.nii.gz` (PET) and `<case>_0001.nii.gz` (CT):
+
+```bash
+mmpetai -i input_dir -o output_dir
+```
+
+This writes `<case>.nii.gz` and `<case>.json` for each case, plus `summary.csv`.
+
+Useful options (see `mmpetai --help` for all of them):
+
+| Option | Purpose |
+|---|---|
+| `--suv-factor F` / `--pet-dicom DIR` | Convert PET stored in Bq/mL to SUV |
+| `-m, --model` | Use another Hub repo or a local model folder |
+| `--revision v1.0` | Pin a specific model version for reproducibility |
+| `-d cuda:1` | Choose the device |
+| `--stitch-on-cpu` | Assemble very large volumes in system memory |
+
+## Python
+
+```python
+from mmpetai import MMPETAI
+
+model = MMPETAI.from_pretrained()                  # released model from the Hub
+# model = MMPETAI.from_pretrained("path/to/local_model_folder")
+
+result = model.predict("pet.nii.gz", "ct.nii.gz")  # reuse `model` for many scans
+result.save("lesions.nii.gz")
+
+print(result.lesion_summary)                       # count, volume, SUVmax, SUVmean, TLU
+print(result.lesion_presence_probability)
+mask = result.mask                                 # numpy uint8 array on the PET grid
+```
+
+## Input requirements
+
+- **Format:** 3D NIfTI (`.nii` / `.nii.gz`). Convert DICOM with a tool such as [dcm2niix](https://github.com/rordenlab/dcm2niix).
+- **PET units:** body-weight SUV. If your PET is in Bq/mL, use `--suv-factor` or `--pet-dicom`. The tool stops if the PET does not look like SUV.
+- **CT units:** Hounsfield units. The CT may be on its own grid; it is resampled onto the PET grid.
+- **Pairing:** PET and CT should come from the same examination.
+
+## Offline and air-gapped use
+
+On a machine with internet access, download the model folder:
+
+```bash
+huggingface-cli download zhanghaoyue/MM-PET-AI --local-dir mmpetai_model
+```
+
+Copy that folder across, then run with `--model mmpetai_model`, or set `MMPETAI_MODEL=/path/to/mmpetai_model`.
+
+## Processing
+
+The preprocessing matches the published evaluation. PET and CT are reoriented to RAS and resampled to 3 mm isotropic voxels. The volume is cropped to the CT body foreground, CT is windowed to [-175, 250] HU, and PET is windowed to SUV [0, 15].
+
+Inference uses overlapping 192³ windows (33% overlap, Gaussian blending, bfloat16 on GPU). Windows with a lesion-presence probability below 0.1 are suppressed. The blended probability is mapped back to the original PET grid and thresholded at 0.5.
+
+A CUDA GPU is strongly recommended. CPU-only inference works but is slow.
+
+## Limitations
+
+- **Tracer prediction is auxiliary.** It was accurate on the internal test set but did not transfer to an external cohort (DEEP-PSMA), so do not use it as a tracer label.
+- **DOTATATE evaluation was limited** (28 internal test scans, no external cohort).
+- **Performance varies by protocol and disease.** It is lower for small, low-uptake lesions and for some institutional prostate cancer and multiple myeloma cohorts. See the paper for details.
+
+## Citation
+
+```bibtex
+@article{zhang_mmpetai,
+  title   = {MM-PET-AI: Unified Whole-Body Lesion Segmentation across FDG, DOTATATE, and PSMA PET/CT},
+  author  = {Zhang, Haoyue and Vazquez-Quiroga, Alesia and Haque, Fahmida and Turkbey, Baris and Harmon, Stephanie},
+  journal = {Engineering Applications of Artificial Intelligence},
+  year    = {to appear}
+}
+```
+
+## For maintainers: releasing weights
+
+```bash
+pip install -e ".[test]"
+
+# 1. Training checkpoint -> Hub-ready folder (model.safetensors, config.json, README.md)
+python tools/export_weights.py --checkpoint fold0_model_best.pth --out hf_model/
+
+# 2. Test the folder locally
+mmpetai -pet pet.nii.gz -ct ct.nii.gz -o test.nii.gz --model hf_model/
+
+# 3. Upload (after `huggingface-cli login`)
+python tools/push_to_hub.py --folder hf_model/ --repo-id zhanghaoyue/MM-PET-AI --tag v1.0
+```
+
+Then set `DEFAULT_REPO_ID` in `mmpetai/weights.py` to the repo id. Edit `tools/MODEL_CARD.md` before exporting; it becomes the model card on the Hub.
+
+Run the tests with `pytest`. Set `MMPETAI_SLOW_TESTS=1` to include a full 192³ forward pass.
+
+## License
+
+To be added.

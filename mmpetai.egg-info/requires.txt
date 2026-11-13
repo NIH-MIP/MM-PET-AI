@@ -1,0 +1,13 @@
+torch>=2.0
+monai>=1.5.2
+nibabel>=4.0
+numpy>=1.22
+scipy>=1.8
+huggingface_hub>=0.20
+safetensors>=0.4
+
+[dicom]
+pydicom>=2.3
+
+[test]
+pytest>=7

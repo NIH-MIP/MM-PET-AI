@@ -19,16 +19,51 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import pickle
 import shutil
+import types
 from pathlib import Path
 
 import torch
 
 from mmpetai import __version__
 from mmpetai.network import build_model
-from mmpetai.weights import WEIGHTS_FILENAME, clean_state_dict, extract_state_dict, save_model_folder
+from mmpetai.weights import (
+    WEIGHTS_FILENAME,
+    clean_state_dict,
+    extract_state_dict,
+    inference_state_dict,
+    load_into_model,
+    save_model_folder,
+)
 
 MODEL_CARD_TEMPLATE = Path(__file__).with_name("MODEL_CARD.md")
+
+
+class _Placeholder:
+    """Stand-in for training-code classes (e.g. the pickled config object)."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __setstate__(self, state):
+        if isinstance(state, dict):
+            self.__dict__.update(state)
+
+
+class _TolerantUnpickler(pickle.Unpickler):
+    """Unpickle without the training codebase: unknown classes become placeholders."""
+
+    def find_class(self, module, name):
+        try:
+            return super().find_class(module, name)
+        except (ModuleNotFoundError, AttributeError):
+            return type(name, (_Placeholder,), {"__module__": module})
+
+
+_tolerant_pickle = types.ModuleType("tolerant_pickle")
+_tolerant_pickle.Unpickler = _TolerantUnpickler
+_tolerant_pickle.load = lambda f, **kwargs: _TolerantUnpickler(f, **kwargs).load()
 
 
 def _sha256(path: Path) -> str:
@@ -46,20 +81,25 @@ def main() -> None:
     parser.add_argument("--note", default="", help="free-text note stored in config.json")
     args = parser.parse_args()
 
-    # Your own training checkpoint is trusted; it may contain non-tensor objects.
-    checkpoint = torch.load(str(args.checkpoint), map_location="cpu", weights_only=False)
+    # Your own training checkpoint is trusted; it may contain non-tensor objects
+    # from the training codebase, which are replaced by placeholders.
+    checkpoint = torch.load(
+        str(args.checkpoint), map_location="cpu", weights_only=False, pickle_module=_tolerant_pickle
+    )
     state_dict, dropped = clean_state_dict(extract_state_dict(checkpoint))
+    epoch = checkpoint.get("epoch") if isinstance(checkpoint, dict) else None
+    del checkpoint  # free optimizer state before building the model
 
     model = build_model()
-    model.load_state_dict(state_dict, strict=True)
+    load_into_model(model, state_dict)
 
     metadata = {"source_checkpoint": args.checkpoint.name, "exported_with": f"mmpetai {__version__}"}
     if args.note:
         metadata["note"] = args.note
-    if isinstance(checkpoint, dict) and isinstance(checkpoint.get("epoch"), int):
-        metadata["epoch"] = checkpoint["epoch"]
+    if isinstance(epoch, int):
+        metadata["epoch"] = epoch
 
-    save_model_folder(model.state_dict(), args.out, metadata)
+    save_model_folder(inference_state_dict(model), args.out, metadata)
     if MODEL_CARD_TEMPLATE.is_file():
         shutil.copyfile(MODEL_CARD_TEMPLATE, args.out / "README.md")
 

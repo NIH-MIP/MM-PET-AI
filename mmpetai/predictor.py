@@ -26,7 +26,7 @@ from .config import (
 from .network import build_model
 from .postprocessing import binarize, probability_to_reference_grid, save_like, summarize_lesions
 from .preprocessing import build_transforms, prepare_case
-from .weights import load_model_files, resolve_model
+from .weights import load_into_model, load_model_files, resolve_model
 
 PathLike = Union[str, Path]
 
@@ -155,7 +155,7 @@ class MMPETAI:
         self.weights_path, config_path = resolve_model(str(model) if model else None, revision=revision)
         state_dict, self.config = load_model_files(self.weights_path, config_path)
         self.model = build_model()
-        self.model.load_state_dict(state_dict, strict=True)
+        load_into_model(self.model, state_dict)
         self.model.to(self.device).eval()
         self._transforms = build_transforms()
 

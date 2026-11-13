@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
@@ -61,6 +62,12 @@ TRAINING_ONLY_PREFIXES = (
 # inference, so they are not compatible with this network.
 UNSUPPORTED_PREFIXES = ("pet_local_refine_proj.",)
 
+# Some MONAI versions create cross-attention parameters inside every ViT
+# TransformerBlock even though the ViT never enables cross-attention, so they
+# are never used in the forward pass. Whether they exist depends on the
+# installed MONAI version; they are ignored on both export and load.
+_UNUSED_VIT_PARAM = re.compile(r"^encoder_(pet|ct)\.vit\.blocks\.\d+\.(norm_)?cross_attn\.")
+
 _WRAPPER_PREFIXES = ("module.", "_orig_mod.")
 
 
@@ -101,11 +108,28 @@ def clean_state_dict(state_dict: Mapping[str, torch.Tensor]) -> Tuple[Dict[str, 
             raise ValueError(
                 "This checkpoint uses the PET-local refinement path, which this release does not support."
             )
-        if key.startswith(TRAINING_ONLY_PREFIXES):
+        if key.startswith(TRAINING_ONLY_PREFIXES) or _UNUSED_VIT_PARAM.match(key):
             dropped.append(key)
             continue
         cleaned[key] = value
     return cleaned, dropped
+
+
+def inference_state_dict(model: torch.nn.Module) -> Dict[str, torch.Tensor]:
+    """The model's state dict without parameters that are never used at inference."""
+    return {k: v for k, v in model.state_dict().items() if not _UNUSED_VIT_PARAM.match(k)}
+
+
+def load_into_model(model: torch.nn.Module, state_dict: Mapping[str, torch.Tensor]) -> None:
+    """Strict load, except for the unused MONAI ViT cross-attention parameters."""
+    usable = {k: v for k, v in state_dict.items() if not _UNUSED_VIT_PARAM.match(k)}
+    missing, unexpected = model.load_state_dict(usable, strict=False)
+    missing = [k for k in missing if not _UNUSED_VIT_PARAM.match(k)]
+    if missing or unexpected:
+        raise RuntimeError(
+            f"Weights do not match the MM-PET-AI network. Missing: {missing[:10]} "
+            f"({len(missing)} total); unexpected: {list(unexpected)[:10]} ({len(unexpected)} total)."
+        )
 
 
 # ---------------------------------------------------------------------------
