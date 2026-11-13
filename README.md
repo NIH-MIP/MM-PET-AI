@@ -103,30 +103,10 @@ A CUDA GPU is strongly recommended. CPU-only inference works but is slow.
 @article{zhang_mmpetai,
   title   = {MM-PET-AI: Unified Whole-Body Lesion Segmentation across FDG, DOTATATE, and PSMA PET/CT},
   author  = {Zhang, Haoyue and Vazquez-Quiroga, Alesia and Haque, Fahmida and Turkbey, Baris and Harmon, Stephanie},
-  journal = {Engineering Applications of Artificial Intelligence},
+  journal = {arxiv},
   year    = {to appear}
 }
 ```
-
-## For maintainers: releasing weights
-
-```bash
-pip install -e ".[test]"
-
-# 1. Training checkpoint -> Hub-ready folder (model.safetensors, config.json, README.md)
-python tools/export_weights.py --checkpoint fold0_model_best.pth --out hf_model/
-
-# 2. Test the folder locally
-mmpetai -pet pet.nii.gz -ct ct.nii.gz -o test.nii.gz --model hf_model/
-
-# 3. Upload (after `huggingface-cli login`)
-python tools/push_to_hub.py --folder hf_model/ --repo-id zhanghaoyue/MM-PET-AI --tag v1.0
-```
-
-Then set `DEFAULT_REPO_ID` in `mmpetai/weights.py` to the repo id. Edit `tools/MODEL_CARD.md` before exporting; it becomes the model card on the Hub.
-
-Run the tests with `pytest`. Set `MMPETAI_SLOW_TESTS=1` to include a full 192³ forward pass.
-
 ## License
 
 To be added.
