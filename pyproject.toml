@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmpetai"
+version = "1.0.0"
+description = "Whole-body lesion segmentation on FDG, PSMA, and DOTATATE PET/CT with one model."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Haoyue Zhang" },
+    { name = "Alesia Vazquez-Quiroga" },
+    { name = "Fahmida Haque" },
+    { name = "Baris Turkbey" },
+    { name = "Stephanie Harmon" },
+]
+keywords = ["PET/CT", "segmentation", "deep learning", "medical imaging", "FDG", "PSMA", "DOTATATE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+    "torch>=2.0",
+    "monai>=1.5.2",
+    "nibabel>=4.0",
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "huggingface_hub>=0.20",
+    "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+dicom = ["pydicom>=2.3"]
+test = ["pytest>=7"]
+
+[project.scripts]
+mmpetai = "mmpetai.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mmpetai*"]
